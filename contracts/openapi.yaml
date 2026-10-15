@@ -1,0 +1,4681 @@
+openapi: 3.1.0
+info:
+  title: MBF Risk Monitor API
+  version: 0.6.0
+  description: |
+    Hợp đồng REST API giữa backend (apps/api) và frontend (apps/web) của MBF Risk Monitor.
+    Đây là nguồn sự thật: không thêm, bớt hay đổi endpoint, trường, mã lỗi ngoài văn bản này mà không hỏi PM.
+
+    Phạm vi hiện tại: kế hoạch 2 (dashboard chỉ xem), kế hoạch 3A (đăng nhập, người dùng, đơn vị, gán đơn vị),
+    kế hoạch 3B (nộp số liệu, duyệt, kỳ, rủi ro còn lại, cấu hình, nhật ký), kế hoạch 4A (thêm/sửa/xóa hồ sơ
+    và mục con, đầu việc, tách đầu việc, import/nhân bản/lưu trữ chu kỳ, xuất BM06 và tổng quan) và kế hoạch 4C
+    (đơn vị, chiều, ngưỡng số và mục tiêu KCI do admin thiết lập; điểm mức rủi ro).
+    Từ kế hoạch 3A mọi endpoint trừ `GET /api/health` và `POST /api/auth/login` **bắt buộc phiên** (cookie
+    `hsrr_session`); thiếu hoặc hết hạn phiên trả 401 `UNAUTHENTICATED`. Khi `mustChangePassword` đang bật, mọi
+    endpoint trừ `POST /api/auth/change-password`, `POST /api/auth/logout` và `GET /api/auth/me` trả 403
+    `MUST_CHANGE_PASSWORD`. Request thay đổi dữ liệu (POST, PUT, PATCH, DELETE) bắt buộc có `Origin` khớp `APP_ORIGIN`,
+    sai thì trả 403 `FORBIDDEN`. Mỗi thao tác có `x-roles`: các vai trò được gọi (admin, ban4, unit, viewer); vai trò khác
+    nhận 403 `FORBIDDEN`.
+    Quyền theo từng mục (đơn vị nào nộp được mục nào) do API trả qua `submitPeriodKeys`, `canWithdraw`, `canApprove`;
+    frontend không tự suy ra.
+
+    Quy ước: tên trường camelCase; ngày `YYYY-MM-DD`; thời điểm ISO 8601 UTC; mã (riskCode, code) ở dạng
+    chuẩn hóa; mọi giá trị đã tính (vùng, tiến độ, trạng thái, tọa độ ma trận) do API trả về,
+    frontend không tự tính. Giá trị có thể null viết `type: [..., "null"]` (OpenAPI 3.1).
+servers:
+  - url: /
+security:
+  - hsrr_session: []
+components:
+  securitySchemes:
+    hsrr_session:
+      type: apiKey
+      in: cookie
+      name: hsrr_session
+      description: Cookie phiên làm việc, do POST /api/auth/login đặt (httpOnly, SameSite=Lax; có Secure khi APP_ORIGIN là https)
+  parameters:
+    CycleParam:
+      name: cycle
+      in: query
+      required: false
+      description: Năm của chu kỳ. Không có thì dùng chu kỳ đang mở (trạng thái open) có năm lớn nhất.
+      schema:
+        type: integer
+        minimum: 2000
+        maximum: 2100
+    PeriodParam:
+      name: period
+      in: query
+      required: false
+      description: |
+        Khóa kỳ, ví dụ `2026-Q4` hoặc `2026-10`. Không có thì dùng kỳ gần nhất có số liệu đã duyệt;
+        chưa có số liệu đã duyệt thì dùng kỳ quý chứa ngày hiện tại nếu kỳ đó tồn tại; nếu không có kỳ nào
+        thì `period` trong đáp ứng là null. Khóa kỳ không tồn tại trong chu kỳ trả 404 PERIOD_NOT_FOUND.
+      schema:
+        type: string
+        pattern: '^[0-9]{4}-(Q[1-4]|[0-9]{2}|E[0-9]+)$'
+    RiskCodePath:
+      name: riskCode
+      in: path
+      required: true
+      description: Mã hồ sơ đã chuẩn hóa, ví dụ `HD11.R27`
+      schema:
+        type: string
+        pattern: '^[A-Z0-9]+\.[A-Z0-9]+$'
+    YearPath:
+      name: year
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 2000
+        maximum: 2100
+    IndicatorIdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    UserIdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TaskIdPath:
+      name: id
+      in: path
+      required: true
+      description: Mã định danh đầu việc (ActionTask.id)
+      schema:
+        type: string
+        format: uuid
+    UnitCodePath:
+      name: code
+      in: path
+      required: true
+      description: Mã đơn vị, ví dụ `TT1`, `BAN4`, `MBF_TINH_TP`
+      schema:
+        type: string
+        pattern: '^[A-Z0-9_]+$'
+        maxLength: 50
+    ItemCodePath:
+      name: code
+      in: path
+      required: true
+      description: Mã kiểm soát hoặc mã chỉ số đã chuẩn hóa, ví dụ `HD11.R27.KS01`, `HD11.R27.KRI01`
+      schema:
+        type: string
+        pattern: '^[A-Z0-9]+\.[A-Z0-9]+\.[A-Z]+[0-9]+$'
+    PeriodKeyPath:
+      name: key
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[0-9]{4}-(Q[1-4]|[0-9]{2}|E[0-9]+)$'
+    QuarterKeyPath:
+      name: periodKey
+      in: path
+      required: true
+      description: Khóa kỳ quý, ví dụ `2026-Q4`
+      schema:
+        type: string
+        pattern: '^[0-9]{4}-Q[1-4]$'
+    SubmissionIdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ExportPeriodParam:
+      name: period
+      in: query
+      required: false
+      description: Khóa kỳ để lấy số liệu đã duyệt đến cuối kỳ đó; không có thì theo quy tắc của PeriodParam
+      schema:
+        type: string
+        pattern: '^[0-9]{4}-(Q[1-4]|[0-9]{2}|E[0-9]+)$'
+  responses:
+    Unauthenticated:
+      description: Chưa đăng nhập hoặc phiên hết hạn (UNAUTHENTICATED)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    Forbidden:
+      description: Không đủ quyền, sai Origin hoặc phải đổi mật khẩu trước (FORBIDDEN hoặc MUST_CHANGE_PASSWORD)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    Conflict:
+      description: Trùng khóa duy nhất hoặc trạng thái không cho phép (CONFLICT hoặc INVALID_STATE hoặc CYCLE_ARCHIVED)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    NotFound:
+      description: Không tìm thấy chu kỳ, hồ sơ, chỉ số hoặc kỳ được yêu cầu (NOT_FOUND hoặc PERIOD_NOT_FOUND)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    ValidationError:
+      description: Tham số truy vấn hoặc đường dẫn không hợp lệ (VALIDATION)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+    ServerError:
+      description: Lỗi hệ thống không dự kiến (INTERNAL), không kèm chi tiết
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+  schemas:
+    ErrorCode:
+      type: string
+      enum:
+        - UNAUTHENTICATED
+        - FORBIDDEN
+        - MUST_CHANGE_PASSWORD
+        - ACCOUNT_LOCKED
+        - RATE_LIMITED
+        - VALIDATION
+        - NOT_FOUND
+        - CONFLICT
+        - REFERENCED
+        - PERIOD_NOT_FOUND
+        - PERIOD_CLOSED
+        - CYCLE_ARCHIVED
+        - INVALID_STATE
+        - SELF_APPROVAL
+        - IMPORT_INVALID
+        - INTERNAL
+    ErrorBody:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+        fieldErrors:
+          type: object
+          additionalProperties:
+            type: string
+        details: {}
+    HealthResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          const: ok
+    Zone:
+      type: string
+      description: Vùng chỉ số. green là cột Thấp trong Excel, yellow là Trung bình, red là Cao.
+      enum:
+        - green
+        - yellow
+        - red
+    ActionStatus:
+      type: string
+      description: Trạng thái kế hoạch hành động, tính ở server (backend-design 6.7)
+      enum:
+        - completed
+        - overdue
+        - at_risk
+        - in_progress
+        - not_started
+    CycleSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - year
+        - status
+      properties:
+        year:
+          type: integer
+        status:
+          type: string
+          enum:
+            - open
+            - archived
+    PeriodSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - key
+        - kind
+        - label
+        - startsOn
+        - endsOn
+        - dueAt
+        - closed
+        - closedAt
+        - closedByName
+        - reopenReason
+      properties:
+        key:
+          type: string
+        kind:
+          type: string
+          enum:
+            - month
+            - quarter
+            - event
+        label:
+          type: string
+        startsOn:
+          type: string
+          format: date
+        endsOn:
+          type: string
+          format: date
+        dueAt:
+          type: string
+          format: date-time
+        closed:
+          type: boolean
+        closedAt:
+          type: [ string, 'null' ]
+          format: date-time
+        closedByName:
+          type: [ string, 'null' ]
+          description: Họ tên người khóa kỳ; null khi kỳ đang mở
+        reopenReason:
+          type: [ string, 'null' ]
+          description: Lý do mở lại gần nhất; null nếu chưa từng mở lại
+    UnitSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - name
+        - kind
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        kind:
+          type: string
+          enum:
+            - department
+            - center
+            - group
+    RiskRating:
+      type: object
+      description: Mức rủi ro. Nhãn lấy nguyên từ Excel; điểm 1 đến 5 theo thang tạm (giả định G1).
+      additionalProperties: false
+      required:
+        - impactLabel
+        - likelihoodLabel
+        - levelLabel
+        - impactScore
+        - likelihoodScore
+        - score
+      properties:
+        impactLabel:
+          type: string
+        likelihoodLabel:
+          type: string
+        levelLabel:
+          type: string
+        impactScore:
+          type: integer
+          minimum: 1
+          maximum: 5
+        likelihoodScore:
+          type: integer
+          minimum: 1
+          maximum: 5
+        score:
+          type: integer
+          minimum: 1
+          maximum: 25
+          description: likelihoodScore × impactScore theo thang tạm G1, do server tính. Nhãn mức (levelLabel) vẫn lấy nguyên văn, không suy từ điểm.
+    IndicatorZoneCounts:
+      type: object
+      description: Số chỉ số theo vùng của giá trị hiện hành. noData là chỉ số chưa có bản đã duyệt.
+      additionalProperties: false
+      required:
+        - total
+        - green
+        - yellow
+        - red
+        - noData
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        green:
+          type: integer
+          minimum: 0
+        yellow:
+          type: integer
+          minimum: 0
+        red:
+          type: integer
+          minimum: 0
+        noData:
+          type: integer
+          minimum: 0
+    ActionStatusCounts:
+      type: object
+      additionalProperties: false
+      required:
+        - total
+        - completed
+        - overdue
+        - atRisk
+        - inProgress
+        - notStarted
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        completed:
+          type: integer
+          minimum: 0
+        overdue:
+          type: integer
+          minimum: 0
+        atRisk:
+          type: integer
+          minimum: 0
+        inProgress:
+          type: integer
+          minimum: 0
+        notStarted:
+          type: integer
+          minimum: 0
+    CurrentReading:
+      type: object
+      description: Bản ghi đã duyệt mới nhất của kỳ gần nhất có bản duyệt (backend-design 6.9)
+      additionalProperties: false
+      required:
+        - periodKey
+        - valueNum
+        - valueText
+        - zone
+        - zoneSource
+        - reviewedAt
+      properties:
+        periodKey:
+          type: string
+        valueNum:
+          type: [ number, 'null' ]
+        valueText:
+          type: [ string, 'null' ]
+        zone:
+          $ref: '#/components/schemas/Zone'
+        zoneSource:
+          type: string
+          enum:
+            - auto
+            - manual
+        reviewedAt:
+          type: string
+          format: date-time
+    ActionTask:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - unit
+        - dueDate
+        - weight
+        - progress
+        - sourceText
+        - lastApprovedUpdateAt
+        - submitPeriodKeys
+        - pendingSubmissions
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        unit:
+          oneOf:
+            - $ref: '#/components/schemas/UnitSummary'
+            - type: 'null'
+        dueDate:
+          type: [ string, 'null' ]
+          format: date
+        weight:
+          type: number
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Tiến độ của bản đã duyệt mới nhất tính đến cuối kỳ được chọn; 0 nếu chưa có bản đã duyệt
+        sourceText:
+          type: [ string, 'null' ]
+          description: Văn bản gốc từ Excel (trách nhiệm, đầu ra, ngày hoàn thành)
+        lastApprovedUpdateAt:
+          type: [ string, 'null' ]
+          format: date-time
+        submitPeriodKeys:
+          type: array
+          description: Các kỳ quý đang mở mà người đang đăng nhập được nộp tiến độ cho đầu việc này; rỗng là không được nộp
+          items:
+            type: string
+        pendingSubmissions:
+          type: array
+          description: Bản tiến độ đang chờ duyệt của đầu việc (mọi kỳ); rỗng với vai trò viewer
+          items:
+            $ref: '#/components/schemas/PendingRef'
+    ProfileSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - riskCode
+        - hsrrCode
+        - name
+        - riskType
+        - riskZone
+        - riskGroup
+        - owner
+        - inherent
+        - residual
+        - kri
+        - kci
+        - actions
+        - actionProgress
+      properties:
+        riskCode:
+          type: string
+        hsrrCode:
+          type: string
+        name:
+          type: string
+        riskType:
+          type: string
+        riskZone:
+          type: string
+        riskGroup:
+          type: string
+        owner:
+          type: string
+        inherent:
+          $ref: '#/components/schemas/RiskRating'
+        residual:
+          description: Mức còn lại mới nhất của kỳ được chọn trở về trước; null nếu Ban 4 chưa nhập
+          oneOf:
+            - $ref: '#/components/schemas/RiskRating'
+            - type: 'null'
+        kri:
+          $ref: '#/components/schemas/IndicatorZoneCounts'
+        kci:
+          $ref: '#/components/schemas/IndicatorZoneCounts'
+        actions:
+          $ref: '#/components/schemas/ActionStatusCounts'
+        actionProgress:
+          type: [ number, 'null' ]
+          description: Trung bình cộng tiến độ các KH của hồ sơ; null nếu hồ sơ không có KH
+    Overview:
+      type: object
+      additionalProperties: false
+      required:
+        - cycle
+        - period
+        - hasApprovedData
+        - asOfDate
+        - profileCount
+        - kri
+        - kci
+        - actions
+        - actionProgressAverage
+      properties:
+        cycle:
+          $ref: '#/components/schemas/CycleSummary'
+        period:
+          oneOf:
+            - $ref: '#/components/schemas/PeriodSummary'
+            - type: 'null'
+        hasApprovedData:
+          type: boolean
+          description: Có ít nhất một số liệu chỉ số hoặc tiến độ đã duyệt hay chưa
+        asOfDate:
+          type: [ string, 'null' ]
+          format: date
+          description: Ngày duyệt gần nhất của số liệu được tính; null nếu chưa có
+        profileCount:
+          type: integer
+          minimum: 0
+        kri:
+          $ref: '#/components/schemas/IndicatorZoneCounts'
+        kci:
+          $ref: '#/components/schemas/IndicatorZoneCounts'
+        actions:
+          $ref: '#/components/schemas/ActionStatusCounts'
+        actionProgressAverage:
+          type: [ number, 'null' ]
+    ScaleLevel:
+      type: object
+      additionalProperties: false
+      required:
+        - score
+        - label
+      properties:
+        score:
+          type: integer
+          minimum: 1
+          maximum: 5
+        label:
+          type: string
+    HeatmapPoint:
+      type: object
+      additionalProperties: false
+      required:
+        - riskCode
+        - name
+        - inherent
+        - residual
+      properties:
+        riskCode:
+          type: string
+        name:
+          type: string
+        inherent:
+          $ref: '#/components/schemas/RiskRating'
+        residual:
+          oneOf:
+            - $ref: '#/components/schemas/RiskRating'
+            - type: 'null'
+    Heatmap:
+      type: object
+      additionalProperties: false
+      required:
+        - scaleProvisional
+        - impactLevels
+        - likelihoodLevels
+        - points
+      properties:
+        scaleProvisional:
+          type: boolean
+          description: true khi thang 5 mức còn là thang tạm (giả định G1); frontend phải hiện ghi chú
+        impactLevels:
+          type: array
+          minItems: 5
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/ScaleLevel'
+        likelihoodLevels:
+          type: array
+          minItems: 5
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/ScaleLevel'
+        points:
+          type: array
+          items:
+            $ref: '#/components/schemas/HeatmapPoint'
+    Cause:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - group
+        - description
+        - controlCodes
+      properties:
+        code:
+          type: string
+        group:
+          type: string
+        description:
+          type: string
+        controlCodes:
+          type: array
+          items:
+            type: string
+    Impact:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - group
+        - description
+        - level
+      properties:
+        code:
+          type: string
+        group:
+          type: string
+        description:
+          type: string
+        level:
+          type: string
+    Control:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - description
+        - ownerText
+        - frequency
+        - objective
+        - method
+        - designEff
+        - operatingEff
+        - overallEff
+        - needsSupplement
+        - causeCodes
+        - actionCodes
+        - units
+      properties:
+        code:
+          type: string
+        description:
+          type: string
+        ownerText:
+          type: string
+        frequency:
+          type: string
+        objective:
+          type: string
+        method:
+          type: string
+        designEff:
+          type: string
+        operatingEff:
+          type: string
+        overallEff:
+          type: string
+        needsSupplement:
+          type: boolean
+        causeCodes:
+          type: array
+          items:
+            type: string
+        actionCodes:
+          type: array
+          items:
+            type: string
+        units:
+          type: array
+          items:
+            $ref: '#/components/schemas/UnitSummary'
+    ActionPlan:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - description
+        - responsibilityText
+        - deliverable
+        - dueText
+        - dueDate
+        - controlCodes
+        - status
+        - progress
+        - tasks
+      properties:
+        code:
+          type: string
+        description:
+          type: string
+        responsibilityText:
+          type: string
+        deliverable:
+          type: string
+        dueText:
+          type: string
+        dueDate:
+          type: [ string, 'null' ]
+          format: date
+          description: Hạn muộn nhất trong các đầu việc có hạn; null nếu không đầu việc nào có hạn
+        controlCodes:
+          type: array
+          items:
+            type: string
+        status:
+          $ref: '#/components/schemas/ActionStatus'
+        progress:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: Trung bình cộng tiến độ các đầu việc, làm tròn 1 chữ số thập phân
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActionTask'
+    IndicatorThresholds:
+      type: object
+      description: Ba ngưỡng nguyên văn từ Excel
+      additionalProperties: false
+      required:
+        - green
+        - yellow
+        - red
+      properties:
+        green:
+          type: string
+        yellow:
+          type: string
+        red:
+          type: string
+    Indicator:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - code
+        - kind
+        - name
+        - formula
+        - frequency
+        - periodKind
+        - thresholds
+        - mode
+        - ownerUnit
+        - note
+        - current
+        - submitPeriodKeys
+        - pendingSubmissions
+        - unitKind
+        - unitLabel
+        - direction
+        - yellowAt
+        - redAt
+        - targetValue
+        - targetProgress
+        - dataSource
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        kind:
+          type: string
+          enum:
+            - kri
+            - kci
+        name:
+          type: string
+        formula:
+          type: string
+        frequency:
+          type: string
+        periodKind:
+          type: string
+          enum:
+            - month
+            - quarter
+            - event
+        thresholds:
+          $ref: '#/components/schemas/IndicatorThresholds'
+        mode:
+          type: string
+          enum:
+            - auto
+            - manual
+          description: auto khi server chấm được vùng (ngưỡng số của admin, hoặc ba chữ ngưỡng phân tích được); manual khi người nhập phải chọn vùng
+        ownerUnit:
+          oneOf:
+            - $ref: '#/components/schemas/UnitSummary'
+            - type: 'null'
+        note:
+          type: [ string, 'null' ]
+        current:
+          oneOf:
+            - $ref: '#/components/schemas/CurrentReading'
+            - type: 'null'
+        submitPeriodKeys:
+          type: array
+          description: Các kỳ đang mở, đúng loại kỳ của chỉ số, mà người đang đăng nhập được nộp số liệu; rỗng là không được nộp
+          items:
+            type: string
+        pendingSubmissions:
+          type: array
+          description: Bản số liệu đang chờ duyệt của chỉ số (mọi kỳ); rỗng với vai trò viewer
+          items:
+            $ref: '#/components/schemas/PendingRef'
+        unitKind:
+          type: string
+          enum:
+            - percent
+            - count
+          description: "percent: giá trị 0 đến 100 (%); count: số nguyên ≥ 0 (số sự cố, vụ việc…)"
+        unitLabel:
+          type: string
+          minLength: 1
+          maxLength: 20
+          description: Chữ hiển thị cạnh giá trị, ví dụ "%", "sự cố", "vụ việc"
+        direction:
+          type:
+            - string
+            - "null"
+          enum:
+            - higher_is_worse
+            - lower_is_worse
+            - null
+          description: 'Chiều xấu: higher_is_worse = "Càng cao càng xấu"; lower_is_worse = "Càng thấp càng xấu"; null khi chưa xác định'
+        yellowAt:
+          type:
+            - number
+            - "null"
+          description: Ngưỡng số vào vùng vàng do admin đặt. Có cả yellowAt và redAt thì server chấm vùng theo ngưỡng số thay cho ba chữ ngưỡng gốc
+        redAt:
+          type:
+            - number
+            - "null"
+          description: Ngưỡng số vào vùng đỏ do admin đặt
+        targetValue:
+          type:
+            - number
+            - "null"
+          description: Mục tiêu (chỉ KCI), ví dụ 100; null với KRI hoặc khi chưa đặt
+        targetProgress:
+          type:
+            - number
+            - "null"
+          minimum: 0
+          description: "Chỉ KCI: giá trị đã duyệt hiện hành / targetValue × 100, server tính; null khi chưa có mục tiêu hoặc chưa có số liệu"
+        dataSource:
+          type:
+            - string
+            - "null"
+          description: 'Phần "Nguồn dữ liệu: …" tách khỏi công thức, server tách; null nếu công thức không có'
+    ResidualEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - periodKey
+        - rating
+      properties:
+        periodKey:
+          type: string
+        rating:
+          $ref: '#/components/schemas/RiskRating'
+    ProfileDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - profile
+        - period
+        - description
+        - relatedActivity
+        - preparedByUnit
+        - causes
+        - impacts
+        - controls
+        - actions
+        - indicators
+        - residualHistory
+      properties:
+        profile:
+          $ref: '#/components/schemas/ProfileSummary'
+        period:
+          oneOf:
+            - $ref: '#/components/schemas/PeriodSummary'
+            - type: 'null'
+        description:
+          type: string
+          description: Giữ nguyên xuống dòng và gạch đầu dòng của Excel
+        relatedActivity:
+          type: string
+        preparedByUnit:
+          type: string
+        causes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Cause'
+        impacts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Impact'
+        controls:
+          type: array
+          items:
+            $ref: '#/components/schemas/Control'
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActionPlan'
+        indicators:
+          type: array
+          items:
+            $ref: '#/components/schemas/Indicator'
+        residualHistory:
+          type: array
+          description: Mức còn lại theo từng kỳ quý đã nhập, kỳ cũ trước
+          items:
+            $ref: '#/components/schemas/ResidualEntry'
+    ActionListItem:
+      type: object
+      additionalProperties: false
+      required:
+        - riskCode
+        - riskName
+        - action
+      properties:
+        riskCode:
+          type: string
+        riskName:
+          type: string
+        action:
+          $ref: '#/components/schemas/ActionPlan'
+    IndicatorListItem:
+      type: object
+      additionalProperties: false
+      required:
+        - riskCode
+        - riskName
+        - indicator
+      properties:
+        riskCode:
+          type: string
+        riskName:
+          type: string
+        indicator:
+          $ref: '#/components/schemas/Indicator'
+    IndicatorHistoryItem:
+      type: object
+      additionalProperties: false
+      required:
+        - periodKey
+        - valueNum
+        - valueText
+        - zone
+        - zoneSource
+        - reviewedAt
+      properties:
+        periodKey:
+          type: string
+        valueNum:
+          type: [ number, 'null' ]
+        valueText:
+          type: [ string, 'null' ]
+        zone:
+          $ref: '#/components/schemas/Zone'
+        zoneSource:
+          type: string
+          enum:
+            - auto
+            - manual
+        reviewedAt:
+          type: string
+          format: date-time
+    UserRole:
+      type: string
+      enum:
+        - admin
+        - ban4
+        - unit
+        - viewer
+    CurrentUser:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - email
+        - fullName
+        - role
+        - unit
+        - mustChangePassword
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        fullName:
+          type: string
+        role:
+          $ref: '#/components/schemas/UserRole'
+        unit:
+          oneOf:
+            - $ref: '#/components/schemas/UnitSummary'
+            - type: 'null'
+        mustChangePassword:
+          type: boolean
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 255
+        password:
+          type: string
+          minLength: 1
+          maxLength: 200
+    ChangePasswordRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - oldPassword
+        - newPassword
+      properties:
+        oldPassword:
+          type: string
+          minLength: 1
+          maxLength: 200
+        newPassword:
+          type: string
+          minLength: 10
+          maxLength: 128
+    UserListItem:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - email
+        - fullName
+        - role
+        - unit
+        - isActive
+        - mustChangePassword
+        - lockedUntil
+        - lastLoginAt
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        fullName:
+          type: string
+        role:
+          $ref: '#/components/schemas/UserRole'
+        unit:
+          oneOf:
+            - $ref: '#/components/schemas/UnitSummary'
+            - type: 'null'
+        isActive:
+          type: boolean
+        mustChangePassword:
+          type: boolean
+        lockedUntil:
+          type: [ string, 'null' ]
+          format: date-time
+          description: Có giá trị và còn ở tương lai khi tài khoản đang bị khóa tạm do đăng nhập sai
+        lastLoginAt:
+          type: [ string, 'null' ]
+          format: date-time
+          description: Lần đăng nhập thành công gần nhất, lấy từ nhật ký (action login); null nếu chưa từng đăng nhập
+        createdAt:
+          type: string
+          format: date-time
+    CreateUserRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - email
+        - fullName
+        - role
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 255
+        fullName:
+          type: string
+          minLength: 1
+          maxLength: 255
+        role:
+          $ref: '#/components/schemas/UserRole'
+        unitCode:
+          type: [ string, 'null' ]
+          description: Bắt buộc khi role là unit. Với admin, ban4, viewer có thể null.
+          pattern: '^[A-Z0-9_]+$'
+    CreatedUser:
+      type: object
+      additionalProperties: false
+      required:
+        - user
+        - temporaryPassword
+      properties:
+        user:
+          $ref: '#/components/schemas/UserListItem'
+        temporaryPassword:
+          type: string
+          description: Mật khẩu tạm, chỉ trả một lần duy nhất; không lưu rõ ở đâu và không ghi vào nhật ký
+    UpdateUserRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        role:
+          $ref: '#/components/schemas/UserRole'
+        unitCode:
+          type: [ string, 'null' ]
+          pattern: '^[A-Z0-9_]+$'
+        isActive:
+          type: boolean
+    ResetPasswordResult:
+      type: object
+      additionalProperties: false
+      required:
+        - temporaryPassword
+      properties:
+        temporaryPassword:
+          type: string
+    ImportedUser:
+      type: object
+      additionalProperties: false
+      required:
+        - email
+        - fullName
+        - role
+        - temporaryPassword
+      properties:
+        email:
+          type: string
+        fullName:
+          type: string
+        role:
+          $ref: '#/components/schemas/UserRole'
+        temporaryPassword:
+          type: string
+    ImportUsersResult:
+      type: object
+      additionalProperties: false
+      required:
+        - created
+      properties:
+        created:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportedUser'
+    ImportRowError:
+      type: object
+      description: Phần tử của `details` khi lỗi là IMPORT_INVALID
+      additionalProperties: false
+      required:
+        - row
+        - field
+        - message
+      properties:
+        row:
+          type: integer
+          minimum: 0
+          description: Số dòng trong file (dòng tiêu đề là 1, dòng dữ liệu đầu là 2); 0 nếu lỗi của cả file
+        field:
+          type: [ string, 'null' ]
+        message:
+          type: string
+    UpsertUnitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - kind
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        kind:
+          type: string
+          enum:
+            - department
+            - center
+            - group
+    ControlUnitsRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - unitCodes
+      properties:
+        unitCodes:
+          type: array
+          description: Thay toàn bộ danh sách đơn vị của kiểm soát; mảng rỗng là gỡ hết
+          maxItems: 20
+          uniqueItems: true
+          items:
+            type: string
+            pattern: '^[A-Z0-9_]+$'
+    NullableUnitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - unitCode
+      properties:
+        unitCode:
+          type: [ string, 'null' ]
+          description: Mã đơn vị, hoặc null để bỏ gán
+          pattern: '^[A-Z0-9_]+$'
+    OwnerUnitResult:
+      type: object
+      additionalProperties: false
+      required:
+        - ownerUnit
+      properties:
+        ownerUnit:
+          oneOf:
+            - $ref: '#/components/schemas/UnitSummary'
+            - type: 'null'
+    TaskUnitResult:
+      type: object
+      additionalProperties: false
+      required:
+        - unit
+      properties:
+        unit:
+          oneOf:
+            - $ref: '#/components/schemas/UnitSummary'
+            - type: 'null'
+    AssignmentControl:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - description
+        - ownerText
+        - units
+      properties:
+        code:
+          type: string
+        description:
+          type: string
+        ownerText:
+          type: string
+          description: Văn bản "Chủ kiểm soát" nguyên văn từ Excel, hiện bên cạnh ô chọn đơn vị
+        units:
+          type: array
+          items:
+            $ref: '#/components/schemas/UnitSummary'
+    AssignmentIndicator:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - kind
+        - name
+        - ownerUnit
+      properties:
+        code:
+          type: string
+        kind:
+          type: string
+          enum:
+            - kri
+            - kci
+        name:
+          type: string
+        ownerUnit:
+          oneOf:
+            - $ref: '#/components/schemas/UnitSummary'
+            - type: 'null'
+    AssignmentTask:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - actionCode
+        - name
+        - responsibilityText
+        - unit
+      properties:
+        id:
+          type: string
+          format: uuid
+        actionCode:
+          type: string
+        name:
+          type: string
+        responsibilityText:
+          type: string
+          description: Văn bản "Trách nhiệm" của KH nguyên văn từ Excel
+        unit:
+          oneOf:
+            - $ref: '#/components/schemas/UnitSummary'
+            - type: 'null'
+    Assignments:
+      type: object
+      additionalProperties: false
+      required:
+        - riskCode
+        - controls
+        - indicators
+        - tasks
+      properties:
+        riskCode:
+          type: string
+        controls:
+          type: array
+          items:
+            $ref: '#/components/schemas/AssignmentControl'
+        indicators:
+          type: array
+          items:
+            $ref: '#/components/schemas/AssignmentIndicator'
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/AssignmentTask'
+
+    PersonRef:
+      type: object
+      additionalProperties: false
+      required:
+        - fullName
+        - unitName
+      properties:
+        fullName:
+          type: string
+        unitName:
+          type: [ string, 'null' ]
+    PendingRef:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - periodKey
+        - submittedAt
+        - submittedByName
+        - canWithdraw
+      properties:
+        id:
+          type: string
+          format: uuid
+        periodKey:
+          type: string
+        submittedAt:
+          type: string
+          format: date-time
+        submittedByName:
+          type: [ string, 'null' ]
+        canWithdraw:
+          type: boolean
+          description: true khi người đang đăng nhập là người nộp và kỳ chưa khóa
+    SubmissionStatus:
+      type: string
+      enum:
+        - pending
+        - approved
+        - rejected
+        - withdrawn
+    SubmitReadingRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - periodKey
+      properties:
+        periodKey:
+          type: string
+        valueNum:
+          type: [ number, 'null' ]
+          description: "Bắt buộc với chỉ số tự động. Theo unitKind: percent 0 đến 100; count số nguyên ≥ 0. Sai thì 422"
+        valueText:
+          type: [ string, 'null' ]
+          maxLength: 500
+          description: Mô tả giá trị; nên có với chỉ số thủ công
+        zone:
+          oneOf:
+            - $ref: '#/components/schemas/Zone'
+            - type: 'null'
+          description: Bắt buộc với chỉ số thủ công; bị bỏ qua với chỉ số tự động
+        zoneNote:
+          type: [ string, 'null' ]
+          maxLength: 1000
+          description: Lý do chọn vùng, bắt buộc (tối thiểu 10 ký tự) với chỉ số thủ công
+        note:
+          type: [ string, 'null' ]
+          maxLength: 1000
+    ReadingSubmission:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - indicatorId
+        - indicatorCode
+        - periodKey
+        - valueNum
+        - valueText
+        - zone
+        - zoneSource
+        - zoneNote
+        - note
+        - status
+        - submittedBy
+        - submittedAt
+        - reviewedBy
+        - reviewedAt
+        - reviewNote
+      properties:
+        id:
+          type: string
+          format: uuid
+        indicatorId:
+          type: string
+          format: uuid
+        indicatorCode:
+          type: string
+        periodKey:
+          type: string
+        valueNum:
+          type: [ number, 'null' ]
+        valueText:
+          type: [ string, 'null' ]
+        zone:
+          $ref: '#/components/schemas/Zone'
+        zoneSource:
+          type: string
+          enum:
+            - auto
+            - manual
+        zoneNote:
+          type: [ string, 'null' ]
+        note:
+          type: [ string, 'null' ]
+        status:
+          $ref: '#/components/schemas/SubmissionStatus'
+        submittedBy:
+          description: null với bản tạo bằng script (ví dụ dữ liệu demo)
+          oneOf:
+            - $ref: '#/components/schemas/PersonRef'
+            - type: 'null'
+        submittedAt:
+          type: string
+          format: date-time
+        reviewedBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonRef'
+            - type: 'null'
+        reviewedAt:
+          type: [ string, 'null' ]
+          format: date-time
+        reviewNote:
+          type: [ string, 'null' ]
+          description: Lý do từ chối
+    SubmitTaskUpdateRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - periodKey
+        - progress
+      properties:
+        periodKey:
+          type: string
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        note:
+          type: [ string, 'null' ]
+          maxLength: 1000
+          description: Bắt buộc khi tiến độ thấp hơn bản đã duyệt mới nhất của đầu việc
+    TaskUpdateSubmission:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - taskId
+        - actionCode
+        - taskName
+        - periodKey
+        - progress
+        - note
+        - status
+        - submittedBy
+        - submittedAt
+        - reviewedBy
+        - reviewedAt
+        - reviewNote
+      properties:
+        id:
+          type: string
+          format: uuid
+        taskId:
+          type: string
+          format: uuid
+        actionCode:
+          type: string
+        taskName:
+          type: string
+        periodKey:
+          type: string
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        note:
+          type: [ string, 'null' ]
+        status:
+          $ref: '#/components/schemas/SubmissionStatus'
+        submittedBy:
+          description: null với bản tạo bằng script (ví dụ dữ liệu demo)
+          oneOf:
+            - $ref: '#/components/schemas/PersonRef'
+            - type: 'null'
+        submittedAt:
+          type: string
+          format: date-time
+        reviewedBy:
+          oneOf:
+            - $ref: '#/components/schemas/PersonRef'
+            - type: 'null'
+        reviewedAt:
+          type: [ string, 'null' ]
+          format: date-time
+        reviewNote:
+          type: [ string, 'null' ]
+    ZonePreview:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - zone
+      properties:
+        mode:
+          type: string
+          enum:
+            - auto
+            - manual
+        zone:
+          description: Vùng do server tính bằng evaluateZone; null khi chỉ số thủ công
+          oneOf:
+            - $ref: '#/components/schemas/Zone'
+            - type: 'null'
+    RejectRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+    ReadingApprovalItem:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - riskCode
+        - targetName
+        - submission
+        - current
+        - canApprove
+      properties:
+        kind:
+          type: string
+          const: reading
+        riskCode:
+          type: string
+        targetName:
+          type: string
+          description: Tên chỉ số
+        submission:
+          $ref: '#/components/schemas/ReadingSubmission'
+        current:
+          description: Giá trị hiện hành đã duyệt của chỉ số (để so sánh); null nếu chưa có
+          oneOf:
+            - $ref: '#/components/schemas/CurrentReading'
+            - type: 'null'
+        canApprove:
+          type: boolean
+          description: false khi người đang đăng nhập không phải admin, hoặc là người nộp (trừ trường hợp chỉ có một admin hoạt động)
+    TaskUpdateApprovalItem:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - riskCode
+        - targetName
+        - submission
+        - currentProgress
+        - canApprove
+      properties:
+        kind:
+          type: string
+          const: task_update
+        riskCode:
+          type: string
+        targetName:
+          type: string
+          description: Mô tả KH
+        submission:
+          $ref: '#/components/schemas/TaskUpdateSubmission'
+        currentProgress:
+          type: [ integer, 'null' ]
+          description: Tiến độ đã duyệt mới nhất của đầu việc; null nếu chưa có
+        canApprove:
+          type: boolean
+    ApprovalItem:
+      oneOf:
+        - $ref: '#/components/schemas/ReadingApprovalItem'
+        - $ref: '#/components/schemas/TaskUpdateApprovalItem'
+      discriminator:
+        propertyName: kind
+        mapping:
+          reading: '#/components/schemas/ReadingApprovalItem'
+          task_update: '#/components/schemas/TaskUpdateApprovalItem'
+    BulkApproveRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - kind
+              - id
+            properties:
+              kind:
+                type: string
+                enum:
+                  - reading
+                  - task_update
+              id:
+                type: string
+                format: uuid
+    BulkApproveResult:
+      type: object
+      additionalProperties: false
+      required:
+        - approved
+      properties:
+        approved:
+          type: integer
+          minimum: 1
+    CreateEventPeriodRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - label
+        - startsOn
+        - endsOn
+      properties:
+        label:
+          type: string
+          minLength: 3
+          maxLength: 100
+        startsOn:
+          type: string
+          format: date
+        endsOn:
+          type: string
+          format: date
+    ReopenRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+    Settings:
+      type: object
+      additionalProperties: false
+      required:
+        - slowDays
+        - slowProgress
+        - staleDays
+        - dueDay
+      properties:
+        slowDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+        slowProgress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        staleDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+        dueDay:
+          type: integer
+          minimum: 1
+          maximum: 28
+          description: Ngày của tháng sau kỳ là hạn nhập; chỉ áp dụng cho kỳ tạo sau khi đổi
+    ResidualRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - impactLabel
+        - likelihoodLabel
+        - levelLabel
+      properties:
+        impactLabel:
+          type: string
+          description: Một nhãn của thang Ảnh hưởng (xem GET /api/heatmap impactLevels)
+        likelihoodLabel:
+          type: string
+          description: Một nhãn của thang Khả năng (xem GET /api/heatmap likelihoodLevels)
+        levelLabel:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: Nhãn mức rủi ro do Ban 4 đánh giá (ví dụ "Cao", "Trung bình"); không tự tính
+    AuditEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - at
+        - user
+        - action
+        - entity
+        - entityId
+        - before
+        - after
+        - ip
+      properties:
+        id:
+          type: string
+          description: Mã dòng nhật ký (số tự tăng, dạng chuỗi)
+        at:
+          type: string
+          format: date-time
+        user:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required:
+                - fullName
+                - email
+              properties:
+                fullName:
+                  type: string
+                email:
+                  type: string
+            - type: 'null'
+        action:
+          type: string
+        entity:
+          type: string
+        entityId:
+          type: [ string, 'null' ]
+        before: {}
+        after: {}
+        ip:
+          type: [ string, 'null' ]
+    AuditPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEntry'
+        nextCursor:
+          type: [ string, 'null' ]
+
+    RatingInput:
+      type: object
+      additionalProperties: false
+      required:
+        - impactLabel
+        - likelihoodLabel
+        - levelLabel
+      properties:
+        impactLabel:
+          type: string
+          description: Nhãn thuộc thang Ảnh hưởng (GET /api/heatmap impactLevels)
+        likelihoodLabel:
+          type: string
+          description: Nhãn thuộc thang Khả năng (GET /api/heatmap likelihoodLevels)
+        levelLabel:
+          type: string
+          minLength: 1
+          maxLength: 50
+    ProfileInput:
+      type: object
+      additionalProperties: false
+      required:
+        - hsrrCode
+        - name
+        - riskType
+        - riskZone
+        - riskGroup
+        - owner
+        - relatedActivity
+        - preparedByUnit
+        - description
+        - inherent
+      properties:
+        hsrrCode:
+          type: string
+          minLength: 1
+          maxLength: 100
+        name:
+          type: string
+          minLength: 1
+          maxLength: 500
+        riskType:
+          type: string
+          maxLength: 255
+        riskZone:
+          type: string
+          maxLength: 255
+        riskGroup:
+          type: string
+          maxLength: 255
+        owner:
+          type: string
+          maxLength: 255
+        relatedActivity:
+          type: string
+          maxLength: 1000
+        preparedByUnit:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 10000
+        inherent:
+          $ref: '#/components/schemas/RatingInput'
+    CauseInput:
+      type: object
+      additionalProperties: false
+      required:
+        - group
+        - description
+      properties:
+        group:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          minLength: 1
+          maxLength: 10000
+    ImpactInput:
+      type: object
+      additionalProperties: false
+      required:
+        - group
+        - description
+        - level
+      properties:
+        group:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          minLength: 1
+          maxLength: 10000
+        level:
+          type: string
+          description: Nhãn thuộc thang Ảnh hưởng
+    ControlInput:
+      type: object
+      additionalProperties: false
+      required:
+        - description
+        - ownerText
+        - frequency
+        - objective
+        - method
+        - designEff
+        - operatingEff
+        - overallEff
+        - needsSupplement
+      properties:
+        description:
+          type: string
+          minLength: 1
+          maxLength: 10000
+        ownerText:
+          type: string
+          maxLength: 1000
+        frequency:
+          type: string
+          maxLength: 100
+        objective:
+          type: string
+          maxLength: 100
+        method:
+          type: string
+          maxLength: 100
+        designEff:
+          type: string
+          maxLength: 100
+        operatingEff:
+          type: string
+          maxLength: 100
+        overallEff:
+          type: string
+          maxLength: 100
+        needsSupplement:
+          type: boolean
+    ActionInput:
+      type: object
+      additionalProperties: false
+      required:
+        - description
+        - responsibilityText
+        - deliverable
+        - dueText
+      properties:
+        description:
+          type: string
+          minLength: 1
+          maxLength: 10000
+        responsibilityText:
+          type: string
+          maxLength: 2000
+        deliverable:
+          type: string
+          maxLength: 2000
+        dueText:
+          type: string
+          maxLength: 500
+          description: Văn bản hạn nguyên văn; server tính dueDate bằng parseDue, không nhận dueDate từ client
+    IndicatorInput:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - formula
+        - frequency
+        - thresholds
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        formula:
+          type: string
+          maxLength: 2000
+        frequency:
+          type: string
+          enum:
+            - Tháng
+            - Quý
+            - Hàng quý
+            - Theo đợt diễn tập
+          description: Đúng bảng backend-design 7.1.1; server suy ra periodKind
+        thresholds:
+          $ref: '#/components/schemas/IndicatorThresholds'
+        note:
+          type: [ string, 'null' ]
+          maxLength: 1000
+    LinkCodesRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - codes
+      properties:
+        codes:
+          type: array
+          maxItems: 50
+          uniqueItems: true
+          items:
+            type: string
+            pattern: '^[A-Z0-9]+\.[A-Z0-9]+\.(NN|KS)[0-9]{2,3}$'
+    TaskInput:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - unitCode
+        - dueDate
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 500
+        unitCode:
+          type: [ string, 'null' ]
+          pattern: '^[A-Z0-9_]+$'
+        dueDate:
+          type: [ string, 'null' ]
+          format: date
+    SplitTaskRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - parts
+      properties:
+        parts:
+          type: array
+          minItems: 2
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/TaskInput'
+    ImportIssue:
+      type: object
+      additionalProperties: false
+      required:
+        - level
+        - code
+        - message
+        - ref
+      properties:
+        level:
+          type: string
+          enum:
+            - error
+            - warning
+        code:
+          type: string
+          enum:
+            - LINK_ONE_SIDED
+            - MANUAL_ZONE
+            - NO_DUE_DATE
+            - SKIPPED_EDITED
+            - SKIPPED_DELETED
+            - BAD_REFERENCE
+            - DUPLICATE_CODE
+            - BAD_PREFIX
+            - MISSING_CODE
+            - UNKNOWN_SCALE_LABEL
+            - UNKNOWN_FREQUENCY
+            - EMPTY_SECTION
+          description: Mã loại vấn đề (backend-design 4.12 mục 15)
+        message:
+          type: string
+        ref:
+          type: [ string, 'null' ]
+          description: Mã hồ sơ hoặc mã mục liên quan
+    ImportCycleReport:
+      type: object
+      additionalProperties: false
+      required:
+        - year
+        - counts
+        - issues
+      properties:
+        year:
+          type: integer
+        counts:
+          type: object
+          additionalProperties: false
+          required:
+            - profiles
+            - causes
+            - impacts
+            - controls
+            - actions
+            - tasksCreated
+            - kri
+            - kci
+            - periodsCreated
+          properties:
+            profiles:
+              type: integer
+            causes:
+              type: integer
+            impacts:
+              type: integer
+            controls:
+              type: integer
+            actions:
+              type: integer
+            tasksCreated:
+              type: integer
+            kri:
+              type: integer
+            kci:
+              type: integer
+            periodsCreated:
+              type: integer
+        issues:
+          type: array
+          description: Chỉ cảnh báo (lỗi chặn thì trả 422 IMPORT_INVALID với details là ImportIssue[])
+          items:
+            $ref: '#/components/schemas/ImportIssue'
+    CloneCycleRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - fromYear
+      properties:
+        fromYear:
+          type: integer
+          minimum: 2000
+          maximum: 2100
+
+    CreateProfileRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - riskCode
+        - hsrrCode
+        - name
+        - riskType
+        - riskZone
+        - riskGroup
+        - owner
+        - relatedActivity
+        - preparedByUnit
+        - description
+        - inherent
+      properties:
+        riskCode:
+          type: string
+          pattern: '^[A-Z0-9]+\.[A-Z0-9]+$'
+        hsrrCode:
+          type: string
+          minLength: 1
+          maxLength: 100
+        name:
+          type: string
+          minLength: 1
+          maxLength: 500
+        riskType:
+          type: string
+          maxLength: 255
+        riskZone:
+          type: string
+          maxLength: 255
+        riskGroup:
+          type: string
+          maxLength: 255
+        owner:
+          type: string
+          maxLength: 255
+        relatedActivity:
+          type: string
+          maxLength: 1000
+        preparedByUnit:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 10000
+        inherent:
+          $ref: '#/components/schemas/RatingInput'
+    CreateCauseRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - group
+        - description
+      properties:
+        code:
+          type: string
+          description: Mã đầy đủ đã chuẩn hóa, bắt đầu bằng riskCode của hồ sơ, ví dụ HD11.R27.NN06
+          pattern: '^[A-Z0-9]+\.[A-Z0-9]+\.(NN|AH|KS|KH|KRI|KCI)[0-9]{2,3}$'
+        group:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          minLength: 1
+          maxLength: 10000
+    CreateImpactRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - group
+        - description
+        - level
+      properties:
+        code:
+          type: string
+          description: Mã đầy đủ đã chuẩn hóa, bắt đầu bằng riskCode của hồ sơ, ví dụ HD11.R27.NN06
+          pattern: '^[A-Z0-9]+\.[A-Z0-9]+\.(NN|AH|KS|KH|KRI|KCI)[0-9]{2,3}$'
+        group:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          minLength: 1
+          maxLength: 10000
+        level:
+          type: string
+          description: Nhãn thuộc thang Ảnh hưởng
+    CreateControlRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - description
+        - ownerText
+        - frequency
+        - objective
+        - method
+        - designEff
+        - operatingEff
+        - overallEff
+        - needsSupplement
+      properties:
+        code:
+          type: string
+          description: Mã đầy đủ đã chuẩn hóa, bắt đầu bằng riskCode của hồ sơ, ví dụ HD11.R27.NN06
+          pattern: '^[A-Z0-9]+\.[A-Z0-9]+\.(NN|AH|KS|KH|KRI|KCI)[0-9]{2,3}$'
+        description:
+          type: string
+          minLength: 1
+          maxLength: 10000
+        ownerText:
+          type: string
+          maxLength: 1000
+        frequency:
+          type: string
+          maxLength: 100
+        objective:
+          type: string
+          maxLength: 100
+        method:
+          type: string
+          maxLength: 100
+        designEff:
+          type: string
+          maxLength: 100
+        operatingEff:
+          type: string
+          maxLength: 100
+        overallEff:
+          type: string
+          maxLength: 100
+        needsSupplement:
+          type: boolean
+    CreateActionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - description
+        - responsibilityText
+        - deliverable
+        - dueText
+      properties:
+        code:
+          type: string
+          description: Mã đầy đủ đã chuẩn hóa, bắt đầu bằng riskCode của hồ sơ, ví dụ HD11.R27.NN06
+          pattern: '^[A-Z0-9]+\.[A-Z0-9]+\.(NN|AH|KS|KH|KRI|KCI)[0-9]{2,3}$'
+        description:
+          type: string
+          minLength: 1
+          maxLength: 10000
+        responsibilityText:
+          type: string
+          maxLength: 2000
+        deliverable:
+          type: string
+          maxLength: 2000
+        dueText:
+          type: string
+          maxLength: 500
+          description: Văn bản hạn nguyên văn; server tính dueDate bằng parseDue, không nhận dueDate từ client
+    CreateIndicatorRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - name
+        - formula
+        - frequency
+        - thresholds
+      properties:
+        code:
+          type: string
+          description: Mã đầy đủ đã chuẩn hóa, bắt đầu bằng riskCode của hồ sơ, ví dụ HD11.R27.NN06
+          pattern: '^[A-Z0-9]+\.[A-Z0-9]+\.(NN|AH|KS|KH|KRI|KCI)[0-9]{2,3}$'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        formula:
+          type: string
+          maxLength: 2000
+        frequency:
+          type: string
+          enum:
+            - Tháng
+            - Quý
+            - Hàng quý
+            - Theo đợt diễn tập
+          description: Đúng bảng backend-design 7.1.1; server suy ra periodKind
+        thresholds:
+          $ref: '#/components/schemas/IndicatorThresholds'
+        note:
+          type: [ string, 'null' ]
+          maxLength: 1000
+    IndicatorTargetsInput:
+      type: object
+      additionalProperties: false
+      required:
+        - unitKind
+        - unitLabel
+        - direction
+        - yellowAt
+        - redAt
+        - targetValue
+      description: "Ngưỡng số, đơn vị, chiều và mục tiêu do admin thiết lập (4C). yellowAt và redAt cùng có hoặc cùng null; khi có thì đúng thứ tự theo direction (higher_is_worse: yellowAt < redAt; lower_is_worse: yellowAt > redAt) và direction bắt buộc khác null. percent: mọi số trong 0 đến 100. targetValue chỉ cho KCI (KRI gửi null). Sai thì 422."
+      properties:
+        unitKind:
+          type: string
+          enum:
+            - percent
+            - count
+        unitLabel:
+          type: string
+          minLength: 1
+          maxLength: 20
+        direction:
+          type:
+            - string
+            - "null"
+          enum:
+            - higher_is_worse
+            - lower_is_worse
+            - null
+        yellowAt:
+          type:
+            - number
+            - "null"
+          minimum: 0
+        redAt:
+          type:
+            - number
+            - "null"
+          minimum: 0
+        targetValue:
+          type:
+            - number
+            - "null"
+          minimum: 0
+paths:
+  /api/health:
+    get:
+      security: []
+      x-roles: []
+      summary: Kiểm tra trạng thái hoạt động của hệ thống và cơ sở dữ liệu
+      responses:
+        '200':
+          description: Hệ thống và cơ sở dữ liệu hoạt động bình thường
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Dịch vụ hoặc cơ sở dữ liệu chưa sẵn sàng
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+  /api/cycles:
+    get:
+      x-roles: [ admin, ban4, unit, viewer ]
+      summary: Danh sách chu kỳ, năm lớn trước
+      responses:
+        '200':
+          description: Danh sách chu kỳ (mảng rỗng nếu chưa có chu kỳ nào)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CycleSummary'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/cycles/{year}/periods:
+    get:
+      x-roles: [ admin, ban4, unit, viewer ]
+      summary: Danh sách kỳ của một chu kỳ, kỳ cũ trước
+      parameters:
+        - $ref: '#/components/parameters/YearPath'
+      responses:
+        '200':
+          description: Danh sách kỳ (mảng rỗng nếu chu kỳ chưa có kỳ nào)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PeriodSummary'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/units:
+    get:
+      x-roles: [ admin, ban4, unit, viewer ]
+      summary: Danh sách đơn vị (có thể rỗng ở kế hoạch 2)
+      responses:
+        '200':
+          description: Danh sách đơn vị theo mã
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UnitSummary'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/profiles:
+    get:
+      x-roles: [ admin, ban4, unit, viewer ]
+      summary: Danh sách hồ sơ rủi ro của chu kỳ (tóm tắt)
+      parameters:
+        - $ref: '#/components/parameters/CycleParam'
+        - $ref: '#/components/parameters/PeriodParam'
+      responses:
+        '200':
+          description: Hồ sơ chưa xóa, sắp theo mã hồ sơ
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProfileSummary'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      summary: Tạo hồ sơ rủi ro trong chu kỳ
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/CycleParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProfileRequest'
+      responses:
+        '201':
+          description: Hồ sơ vừa tạo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileSummary'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/profiles/{riskCode}:
+    get:
+      x-roles: [ admin, ban4, unit, viewer ]
+      summary: Chi tiết một hồ sơ (nhận diện, nguyên nhân, ảnh hưởng, kiểm soát, kế hoạch hành động, chỉ số)
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+        - $ref: '#/components/parameters/PeriodParam'
+      responses:
+        '200':
+          description: Hồ sơ đầy đủ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      summary: Sửa thông tin hồ sơ (mã không đổi)
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileInput'
+      responses:
+        '200':
+          description: Hồ sơ sau khi sửa
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileSummary'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      summary: Xóa mềm hồ sơ và mọi mục con (từ chối REFERENCED nếu đã có số liệu, tiến độ hoặc mức còn lại)
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      responses:
+        '204':
+          description: Đã xóa
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/overview:
+    get:
+      x-roles: [ admin, ban4, unit, viewer ]
+      summary: Số liệu tổng quan của dashboard (chỉ tính bản đã duyệt)
+      parameters:
+        - $ref: '#/components/parameters/CycleParam'
+        - $ref: '#/components/parameters/PeriodParam'
+      responses:
+        '200':
+          description: Thẻ tổng quan. Chưa có số liệu đã duyệt thì hasApprovedData là false, các chỉ số đếm vào noData.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Overview'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/heatmap:
+    get:
+      x-roles: [ admin, ban4, unit, viewer ]
+      summary: Vị trí các hồ sơ trên ma trận nhiệt 5x5 (mức tiềm ẩn và mức còn lại)
+      parameters:
+        - $ref: '#/components/parameters/CycleParam'
+        - $ref: '#/components/parameters/PeriodParam'
+      responses:
+        '200':
+          description: Thang 5 mức và vị trí từng hồ sơ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Heatmap'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/actions:
+    get:
+      x-roles: [ admin, ban4, unit, viewer ]
+      summary: Danh sách kế hoạch hành động kèm đầu việc
+      parameters:
+        - $ref: '#/components/parameters/CycleParam'
+        - $ref: '#/components/parameters/PeriodParam'
+        - name: riskCode
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/ActionStatus'
+        - name: unit
+          in: query
+          required: false
+          description: Mã đơn vị; lọc KH có ít nhất một đầu việc thuộc đơn vị đó
+          schema:
+            type: string
+        - name: dueFrom
+          in: query
+          required: false
+          description: Hạn của KH từ ngày này (gồm). KH không có hạn bị loại khi có tham số này.
+          schema:
+            type: string
+            format: date
+        - name: dueTo
+          in: query
+          required: false
+          description: Hạn của KH đến ngày này (gồm). KH không có hạn bị loại khi có tham số này.
+          schema:
+            type: string
+            format: date
+        - name: q
+          in: query
+          required: false
+          description: Tìm theo mã hoặc từ khóa trong mô tả, không phân biệt hoa thường
+          schema:
+            type: string
+            maxLength: 200
+      responses:
+        '200':
+          description: Danh sách KH sắp theo hạn tăng dần, KH không có hạn xếp cuối
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ActionListItem'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/indicators:
+    get:
+      x-roles: [ admin, ban4, unit, viewer ]
+      summary: Danh sách chỉ số KRI/KCI kèm giá trị hiện hành
+      parameters:
+        - $ref: '#/components/parameters/CycleParam'
+        - $ref: '#/components/parameters/PeriodParam'
+        - name: riskCode
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - kri
+              - kci
+        - name: zone
+          in: query
+          required: false
+          description: Vùng của giá trị hiện hành; `none` là chưa có số liệu đã duyệt
+          schema:
+            type: string
+            enum:
+              - green
+              - yellow
+              - red
+              - none
+        - name: unit
+          in: query
+          required: false
+          description: Mã đơn vị phụ trách chỉ số
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Danh sách chỉ số sắp theo mã hồ sơ rồi mã chỉ số
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IndicatorListItem'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/indicators/{id}/history:
+    get:
+      x-roles: [ admin, ban4, unit, viewer ]
+      summary: Các giá trị đã duyệt của một chỉ số theo kỳ, cho biểu đồ xu hướng
+      parameters:
+        - $ref: '#/components/parameters/IndicatorIdPath'
+      responses:
+        '200':
+          description: Mỗi kỳ một mục (bản đã duyệt mới nhất của kỳ), kỳ cũ trước; mảng rỗng nếu chưa có số liệu
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IndicatorHistoryItem'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/auth/login:
+    post:
+      summary: Đăng nhập bằng email và mật khẩu; đặt cookie phiên hsrr_session
+      security: []
+      x-roles: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Đăng nhập thành công, trả người dùng hiện tại và đặt cookie phiên
+          headers:
+            Set-Cookie:
+              description: hsrr_session=<token>; HttpOnly; SameSite=Lax; Path=/ (có Secure khi APP_ORIGIN là https)
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentUser'
+        '401':
+          description: Email hoặc mật khẩu không đúng, hoặc tài khoản đã bị tắt (UNAUTHENTICATED, cùng một thông báo cho mọi trường hợp)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '423':
+          description: Tài khoản bị khóa tạm do đăng nhập sai nhiều lần (ACCOUNT_LOCKED)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '429':
+          description: Vượt giới hạn số lần đăng nhập theo địa chỉ IP (RATE_LIMITED)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/auth/logout:
+    post:
+      summary: Đăng xuất, thu hồi phiên hiện tại và xóa cookie
+      x-roles: [ admin, ban4, unit, viewer ]
+      responses:
+        '204':
+          description: Đã đăng xuất
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/auth/me:
+    get:
+      summary: Người dùng đang đăng nhập
+      x-roles: [ admin, ban4, unit, viewer ]
+      responses:
+        '200':
+          description: Người dùng hiện tại (kể cả khi mustChangePassword là true)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentUser'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/auth/change-password:
+    post:
+      summary: Đổi mật khẩu của chính mình
+      description: |
+        Mật khẩu mới tối thiểu 10 ký tự, khác mật khẩu hiện tại và không trùng 5 mật khẩu gần nhất.
+        Thành công thì thu hồi mọi phiên khác của người này, tắt cờ buộc đổi, giữ phiên hiện tại.
+        Sai mật khẩu hiện tại hoặc mật khẩu mới không đạt: 422 VALIDATION kèm fieldErrors (oldPassword, newPassword).
+      x-roles: [ admin, ban4, unit, viewer ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '204':
+          description: Đã đổi mật khẩu
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/users:
+    get:
+      summary: Danh sách người dùng (admin)
+      x-roles: [ admin ]
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Tìm theo email hoặc họ tên (không phân biệt hoa thường)
+          schema:
+            type: string
+            maxLength: 100
+        - name: role
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/UserRole'
+        - name: unitCode
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[A-Z0-9_]+$'
+        - name: isActive
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Người dùng sắp theo họ tên
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserListItem'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      summary: Tạo một người dùng, sinh mật khẩu tạm trả về một lần (admin)
+      x-roles: [ admin ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: Đã tạo; cờ buộc đổi mật khẩu bật
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatedUser'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/users/import:
+    post:
+      summary: Tạo người dùng hàng loạt từ file CSV hoặc xlsx (admin)
+      description: |
+        Cột bắt buộc: `email`, `full_name`, `role`, `unit_code`. Tối đa 200 dòng. Kiểm tra toàn file trước; có lỗi thì
+        không tạo ai và trả 422 IMPORT_INVALID với `details` là mảng ImportRowError. Hợp lệ thì tạo tất cả trong một
+        transaction và trả mật khẩu tạm của từng người một lần duy nhất.
+      x-roles: [ admin ]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Đã tạo toàn bộ người dùng trong file
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportUsersResult'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: File thiếu, quá lớn, sai định dạng (VALIDATION) hoặc có lỗi theo dòng (IMPORT_INVALID, details là mảng ImportRowError)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/users/import-template:
+    get:
+      summary: Tải file CSV mẫu để nhập người dùng hàng loạt (admin)
+      x-roles: [ admin ]
+      responses:
+        '200':
+          description: File CSV UTF-8 chỉ có dòng tiêu đề `email,full_name,role,unit_code`
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            text/csv:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/users/{id}/reset-password:
+    post:
+      summary: Đặt lại mật khẩu cho người dùng, trả mật khẩu tạm một lần (admin)
+      x-roles: [ admin ]
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: Đã đặt mật khẩu tạm mới, thu hồi mọi phiên của người đó, bật cờ buộc đổi
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResetPasswordResult'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/users/{id}:
+    patch:
+      summary: Đổi vai trò, đơn vị hoặc bật/tắt tài khoản (admin)
+      description: |
+        Không cho hạ vai trò hoặc tắt admin đang hoạt động cuối cùng (409 INVALID_STATE). Tắt tài khoản thì thu hồi
+        mọi phiên của người đó. Role `unit` bắt buộc có đơn vị sau khi đổi (422 VALIDATION nếu thiếu).
+      x-roles: [ admin ]
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: Người dùng sau khi cập nhật
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserListItem'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/units/{code}:
+    put:
+      summary: Tạo hoặc sửa đơn vị (admin)
+      x-roles: [ admin ]
+      parameters:
+        - $ref: '#/components/parameters/UnitCodePath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertUnitRequest'
+      responses:
+        '200':
+          description: Đơn vị sau khi tạo hoặc sửa
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitSummary'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/profiles/{riskCode}/assignments:
+    get:
+      summary: Kiểm soát, chỉ số và đầu việc của hồ sơ cùng đơn vị đã gán (admin, ban4)
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      responses:
+        '200':
+          description: Danh sách gán kèm văn bản gốc từ Excel
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Assignments'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/profiles/{riskCode}/controls/{code}/units:
+    put:
+      summary: Gán đơn vị cho một kiểm soát, thay toàn bộ danh sách (admin)
+      x-roles: [ admin ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/ItemCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControlUnitsRequest'
+      responses:
+        '200':
+          description: Danh sách đơn vị của kiểm soát sau khi gán
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UnitSummary'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/profiles/{riskCode}/indicators/{code}/owner:
+    put:
+      summary: Gán đơn vị phụ trách một chỉ số KRI/KCI (admin)
+      x-roles: [ admin ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/ItemCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NullableUnitRequest'
+      responses:
+        '200':
+          description: Đơn vị phụ trách sau khi gán
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnerUnitResult'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/tasks/{id}/unit:
+    put:
+      summary: Gán đơn vị cho một đầu việc (admin, ban4)
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NullableUnitRequest'
+      responses:
+        '200':
+          description: Đơn vị của đầu việc sau khi gán
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskUnitResult'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/indicators/{id}/zone-preview:
+    get:
+      summary: Xem trước vùng của một giá trị trước khi nộp (server tính, cùng hàm với lúc nộp)
+      x-roles: [ admin, ban4, unit ]
+      parameters:
+        - $ref: '#/components/parameters/IndicatorIdPath'
+        - name: value
+          in: query
+          required: true
+          schema:
+            type: number
+            minimum: 0
+            description: "percent: 0 đến 100; count: số nguyên ≥ 0 (server kiểm theo unitKind, sai thì 422)"
+      responses:
+        '200':
+          description: Chế độ chấm vùng và vùng tính được
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ZonePreview'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/indicators/{id}/readings:
+    get:
+      summary: Mọi bản nộp số liệu của một chỉ số (mọi trạng thái), mới trước
+      description: admin, ban4 xem mọi chỉ số; unit chỉ xem chỉ số của đơn vị mình (khác thì 403)
+      x-roles: [ admin, ban4, unit ]
+      parameters:
+        - $ref: '#/components/parameters/IndicatorIdPath'
+        - $ref: '#/components/parameters/PeriodParam'
+      responses:
+        '200':
+          description: Danh sách bản nộp
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ReadingSubmission'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      summary: Nộp số liệu chỉ số cho một kỳ (tạo bản chờ duyệt)
+      description: Kiểm tra theo backend-design 5.1. Vùng do server tính với chỉ số tự động.
+      x-roles: [ admin, ban4, unit ]
+      parameters:
+        - $ref: '#/components/parameters/IndicatorIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitReadingRequest'
+      responses:
+        '201':
+          description: Đã tạo bản chờ duyệt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadingSubmission'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/tasks/{id}/updates:
+    get:
+      summary: Mọi bản cập nhật tiến độ của một đầu việc (mọi trạng thái), mới trước
+      description: admin, ban4 xem mọi đầu việc; unit chỉ xem đầu việc của đơn vị mình (khác thì 403)
+      x-roles: [ admin, ban4, unit ]
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+      responses:
+        '200':
+          description: Danh sách bản cập nhật
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TaskUpdateSubmission'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      summary: Nộp cập nhật tiến độ đầu việc cho một kỳ quý (tạo bản chờ duyệt)
+      description: Kiểm tra theo backend-design 5.2.
+      x-roles: [ admin, ban4, unit ]
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitTaskUpdateRequest'
+      responses:
+        '201':
+          description: Đã tạo bản chờ duyệt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskUpdateSubmission'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/readings/{id}/withdraw:
+    post:
+      summary: Người nộp rút lại bản số liệu chỉ số đang chờ duyệt
+      x-roles: [ admin, ban4, unit ]
+      parameters:
+        - $ref: '#/components/parameters/SubmissionIdPath'
+      responses:
+        '200':
+          description: Bản sau khi rút (withdrawn)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadingSubmission'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/readings/{id}/approve:
+    post:
+      summary: Duyệt bản số liệu chỉ số đang chờ
+      description: 403 SELF_APPROVAL nếu người duyệt là người nộp (trừ khi chỉ có một admin hoạt động); 409 INVALID_STATE nếu không còn pending; 409 PERIOD_CLOSED nếu kỳ đã khóa
+      x-roles: [ admin ]
+      parameters:
+        - $ref: '#/components/parameters/SubmissionIdPath'
+      responses:
+        '200':
+          description: Bản sau khi duyệt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadingSubmission'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/readings/{id}/reject:
+    post:
+      summary: Từ chối bản số liệu chỉ số đang chờ, bắt buộc lý do
+      x-roles: [ admin ]
+      parameters:
+        - $ref: '#/components/parameters/SubmissionIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RejectRequest'
+      responses:
+        '200':
+          description: Bản sau khi từ chối
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadingSubmission'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/task-updates/{id}/withdraw:
+    post:
+      summary: Người nộp rút lại bản tiến độ đầu việc đang chờ duyệt
+      x-roles: [ admin, ban4, unit ]
+      parameters:
+        - $ref: '#/components/parameters/SubmissionIdPath'
+      responses:
+        '200':
+          description: Bản sau khi rút (withdrawn)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskUpdateSubmission'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/task-updates/{id}/approve:
+    post:
+      summary: Duyệt bản tiến độ đầu việc đang chờ
+      description: 403 SELF_APPROVAL nếu người duyệt là người nộp (trừ khi chỉ có một admin hoạt động); 409 INVALID_STATE nếu không còn pending; 409 PERIOD_CLOSED nếu kỳ đã khóa
+      x-roles: [ admin ]
+      parameters:
+        - $ref: '#/components/parameters/SubmissionIdPath'
+      responses:
+        '200':
+          description: Bản sau khi duyệt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskUpdateSubmission'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/task-updates/{id}/reject:
+    post:
+      summary: Từ chối bản tiến độ đầu việc đang chờ, bắt buộc lý do
+      x-roles: [ admin ]
+      parameters:
+        - $ref: '#/components/parameters/SubmissionIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RejectRequest'
+      responses:
+        '200':
+          description: Bản sau khi từ chối
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskUpdateSubmission'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/approvals:
+    get:
+      summary: Hàng chờ duyệt (chỉ bản pending)
+      description: admin, ban4 thấy mọi bản; unit chỉ thấy bản của các mục thuộc đơn vị mình. Sắp theo thời gian nộp, cũ trước.
+      x-roles: [ admin, ban4, unit ]
+      parameters:
+        - $ref: '#/components/parameters/CycleParam'
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - reading
+              - task_update
+        - name: period
+          in: query
+          required: false
+          description: Lọc theo khóa kỳ của bản nộp
+          schema:
+            type: string
+            pattern: '^[0-9]{4}-(Q[1-4]|[0-9]{2}|E[0-9]+)$'
+        - name: riskCode
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Danh sách bản chờ duyệt
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ApprovalItem'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/approvals/bulk-approve:
+    post:
+      summary: Duyệt nhiều bản trong một transaction
+      description: Một mục lỗi thì cả lô thất bại (409 INVALID_STATE hoặc PERIOD_CLOSED, hoặc 403 SELF_APPROVAL); `details` liệt kê mục lỗi `{kind, id, code, message}`.
+      x-roles: [ admin ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkApproveRequest'
+      responses:
+        '200':
+          description: Đã duyệt toàn bộ lô
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkApproveResult'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/cycles/{year}/periods/ensure:
+    post:
+      summary: Tạo các kỳ tháng và quý còn thiếu của chu kỳ (backend-design 4.11)
+      x-roles: [ admin ]
+      parameters:
+        - $ref: '#/components/parameters/YearPath'
+      responses:
+        '200':
+          description: Danh sách kỳ của chu kỳ sau khi tạo
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PeriodSummary'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/cycles/{year}/periods/events:
+    post:
+      summary: Tạo một kỳ loại đợt (cho chỉ số theo đợt)
+      x-roles: [ admin ]
+      parameters:
+        - $ref: '#/components/parameters/YearPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEventPeriodRequest'
+      responses:
+        '201':
+          description: Kỳ đợt vừa tạo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeriodSummary'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/cycles/{year}/periods/{key}/close:
+    post:
+      summary: Khóa kỳ
+      description: Còn bản pending của kỳ thì 409 INVALID_STATE, `details` là danh sách `{kind, id}`.
+      x-roles: [ admin ]
+      parameters:
+        - $ref: '#/components/parameters/YearPath'
+        - $ref: '#/components/parameters/PeriodKeyPath'
+      responses:
+        '200':
+          description: Kỳ sau khi khóa
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeriodSummary'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/cycles/{year}/periods/{key}/reopen:
+    post:
+      summary: Mở lại kỳ đã khóa, bắt buộc lý do
+      x-roles: [ admin ]
+      parameters:
+        - $ref: '#/components/parameters/YearPath'
+        - $ref: '#/components/parameters/PeriodKeyPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReopenRequest'
+      responses:
+        '200':
+          description: Kỳ sau khi mở lại
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeriodSummary'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/settings:
+    get:
+      summary: Cấu hình hệ thống
+      x-roles: [ admin ]
+      responses:
+        '200':
+          description: Cấu hình hiện tại
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settings'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      summary: Cập nhật cấu hình (thay toàn bộ bốn khóa)
+      x-roles: [ admin ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Settings'
+      responses:
+        '200':
+          description: Cấu hình sau khi lưu
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settings'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/profiles/{riskCode}/residual/{periodKey}:
+    put:
+      summary: Nhập hoặc ghi đè mức rủi ro còn lại của hồ sơ cho một kỳ quý
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/QuarterKeyPath'
+        - $ref: '#/components/parameters/CycleParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResidualRequest'
+      responses:
+        '200':
+          description: Mức còn lại đã lưu
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResidualEntry'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/audit:
+    get:
+      summary: Nhật ký thay đổi, mới trước, phân trang theo con trỏ
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - name: actor
+          in: query
+          required: false
+          description: Tìm theo email hoặc họ tên người thực hiện (không phân biệt hoa thường)
+          schema:
+            type: string
+            maxLength: 100
+        - name: entity
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 100
+        - name: action
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 100
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: cursor
+          in: query
+          required: false
+          description: Giá trị nextCursor của trang trước
+          schema:
+            type: string
+            pattern: '^[0-9]+$'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        '200':
+          description: Một trang nhật ký
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditPage'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/profiles/{riskCode}/causes:
+    post:
+      summary: Thêm nguyên nhân vào hồ sơ
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCauseRequest'
+      responses:
+        '201':
+          description: Mục nguyên nhân vừa tạo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cause'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/profiles/{riskCode}/causes/{code}:
+    put:
+      summary: Sửa nguyên nhân (mã không đổi)
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/ItemCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CauseInput'
+      responses:
+        '200':
+          description: Mục sau khi sửa
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cause'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      summary: Xóa mềm nguyên nhân (từ chối REFERENCED nếu còn liên kết hoặc số liệu)
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/ItemCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      responses:
+        '204':
+          description: Đã xóa
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/profiles/{riskCode}/impacts:
+    post:
+      summary: Thêm ảnh hưởng vào hồ sơ
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateImpactRequest'
+      responses:
+        '201':
+          description: Mục ảnh hưởng vừa tạo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Impact'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/profiles/{riskCode}/impacts/{code}:
+    put:
+      summary: Sửa ảnh hưởng (mã không đổi)
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/ItemCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImpactInput'
+      responses:
+        '200':
+          description: Mục sau khi sửa
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Impact'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      summary: Xóa mềm ảnh hưởng (từ chối REFERENCED nếu còn liên kết hoặc số liệu)
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/ItemCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      responses:
+        '204':
+          description: Đã xóa
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/profiles/{riskCode}/controls:
+    post:
+      summary: Thêm kiểm soát vào hồ sơ
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateControlRequest'
+      responses:
+        '201':
+          description: Mục kiểm soát vừa tạo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Control'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/profiles/{riskCode}/controls/{code}:
+    put:
+      summary: Sửa kiểm soát (mã không đổi)
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/ItemCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControlInput'
+      responses:
+        '200':
+          description: Mục sau khi sửa
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Control'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      summary: Xóa mềm kiểm soát (từ chối REFERENCED nếu còn liên kết hoặc số liệu)
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/ItemCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      responses:
+        '204':
+          description: Đã xóa
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/profiles/{riskCode}/actions:
+    post:
+      summary: Thêm kế hoạch hành động vào hồ sơ
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateActionRequest'
+      responses:
+        '201':
+          description: Mục kế hoạch hành động vừa tạo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionPlan'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/profiles/{riskCode}/actions/{code}:
+    put:
+      summary: Sửa kế hoạch hành động (mã không đổi)
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/ItemCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionInput'
+      responses:
+        '200':
+          description: Mục sau khi sửa
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionPlan'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      summary: Xóa mềm kế hoạch hành động (từ chối REFERENCED nếu còn liên kết hoặc số liệu)
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/ItemCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      responses:
+        '204':
+          description: Đã xóa
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/profiles/{riskCode}/indicators:
+    post:
+      summary: Thêm chỉ số KRI/KCI vào hồ sơ
+      x-roles:
+        - admin
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateIndicatorRequest'
+      responses:
+        '201':
+          description: Mục chỉ số KRI/KCI vừa tạo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Indicator'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+      description: Từ 4C chỉ admin (ngưỡng và tần suất do admin thiết lập).
+  /api/profiles/{riskCode}/indicators/{code}:
+    put:
+      summary: Sửa chỉ số KRI/KCI (mã không đổi)
+      description: Đổi ngưỡng thì tính lại quy tắc vùng, số liệu cũ giữ vùng cũ; đổi tần suất làm đổi loại kỳ khi chỉ số đã có bản nộp thì 409 INVALID_STATE Từ 4C chỉ admin (ngưỡng và tần suất do admin thiết lập).
+      x-roles:
+        - admin
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/ItemCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IndicatorInput'
+      responses:
+        '200':
+          description: Mục sau khi sửa
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Indicator'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      summary: Xóa mềm chỉ số KRI/KCI (từ chối REFERENCED nếu còn liên kết hoặc số liệu)
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/ItemCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      responses:
+        '204':
+          description: Đã xóa
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/profiles/{riskCode}/controls/{code}/causes:
+    put:
+      summary: Thay toàn bộ nguyên nhân liên kết của một kiểm soát (cùng hồ sơ)
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/ItemCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LinkCodesRequest'
+      responses:
+        '200':
+          description: Kiểm soát sau khi đổi liên kết
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Control'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/profiles/{riskCode}/actions/{code}/controls:
+    put:
+      summary: Thay toàn bộ kiểm soát liên kết của một kế hoạch hành động (cùng hồ sơ)
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/ItemCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LinkCodesRequest'
+      responses:
+        '200':
+          description: KH sau khi đổi liên kết
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionPlan'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/profiles/{riskCode}/actions/{code}/tasks:
+    post:
+      summary: Thêm đầu việc cho kế hoạch hành động
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/ItemCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskInput'
+      responses:
+        '201':
+          description: Đầu việc vừa tạo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionTask'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/tasks/{id}:
+    put:
+      summary: Sửa tên, đơn vị, hạn của đầu việc
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskInput'
+      responses:
+        '200':
+          description: Đầu việc sau khi sửa
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionTask'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      summary: Xóa mềm đầu việc (REFERENCED nếu đã có bản cập nhật; INVALID_STATE nếu là đầu việc cuối cùng của KH)
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+      responses:
+        '204':
+          description: Đã xóa
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/tasks/{id}/split:
+    post:
+      summary: Tách một đầu việc thành nhiều đầu việc, giữ văn bản gốc (REFERENCED nếu đầu việc cũ đã có bản cập nhật)
+      x-roles: [ admin, ban4 ]
+      parameters:
+        - $ref: '#/components/parameters/TaskIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SplitTaskRequest'
+      responses:
+        '201':
+          description: Các đầu việc mới thay cho đầu việc cũ
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ActionTask'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/cycles/import:
+    post:
+      summary: Import chu kỳ từ file Excel BM06 (tạo mới hoặc cập nhật, không ghi đè mục đã sửa tay)
+      x-roles: [ admin ]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - year
+                - file
+              properties:
+                year:
+                  type: integer
+                  minimum: 2000
+                  maximum: 2100
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Báo cáo import (đếm và cảnh báo)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportCycleReport'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          description: File thiếu, sai định dạng, quá 5 MB (VALIDATION) hoặc có lỗi chặn (IMPORT_INVALID, details là ImportIssue[])
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/cycles/{year}/clone:
+    post:
+      summary: Tạo chu kỳ năm {year} bằng cách nhân bản một chu kỳ cũ (backend-design 7.3)
+      x-roles: [ admin ]
+      parameters:
+        - $ref: '#/components/parameters/YearPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloneCycleRequest'
+      responses:
+        '201':
+          description: Báo cáo nhân bản
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportCycleReport'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/cycles/{year}/archive:
+    post:
+      summary: Lưu trữ chu kỳ (chỉ đọc); còn bản chờ duyệt thì 409 INVALID_STATE
+      x-roles: [ admin ]
+      parameters:
+        - $ref: '#/components/parameters/YearPath'
+      responses:
+        '200':
+          description: Chu kỳ sau khi lưu trữ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CycleSummary'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/export/profile/{riskCode}:
+    get:
+      summary: Xuất hồ sơ theo biểu mẫu BM06 (xlsx), số liệu đã duyệt đến cuối kỳ chọn
+      description: unit chỉ xuất được hồ sơ có mục giao cho đơn vị mình (khác thì 403)
+      x-roles: [ admin, ban4, unit ]
+      parameters:
+        - $ref: '#/components/parameters/RiskCodePath'
+        - $ref: '#/components/parameters/CycleParam'
+        - $ref: '#/components/parameters/ExportPeriodParam'
+      responses:
+        '200':
+          description: File xlsx
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/export/summary:
+    get:
+      summary: Xuất báo cáo tổng quan (xlsx)
+      x-roles: [ admin, ban4, unit, viewer ]
+      parameters:
+        - $ref: '#/components/parameters/CycleParam'
+        - $ref: '#/components/parameters/ExportPeriodParam'
+      responses:
+        '200':
+          description: File xlsx
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/profiles/{riskCode}/indicators/{code}/targets:
+    put:
+      summary: Thiết lập đơn vị, chiều, ngưỡng số và mục tiêu của chỉ số (4C)
+      description: Chỉ admin. Đặt ngưỡng số thì chỉ số thành chấm vùng tự động (kể cả chỉ số trước đó chọn vùng thủ công). Bản nộp cũ giữ vùng đã lưu. Đánh dấu manually_edited_at để import lại không ghi đè. Nhật ký set_indicator_targets.
+      x-roles:
+        - admin
+      parameters:
+        - $ref: "#/components/parameters/RiskCodePath"
+        - $ref: "#/components/parameters/ItemCodePath"
+        - $ref: "#/components/parameters/CycleParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IndicatorTargetsInput"
+      responses:
+        "200":
+          description: Chỉ số sau khi thiết lập
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Indicator"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/ServerError"

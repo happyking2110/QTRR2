@@ -1,0 +1,36 @@
+# Git & IDEs
+.git
+.gitignore
+.claude
+.idea
+.vscode
+.DS_Store
+
+# Environment & secrets (STRICT: never bake secrets into images)
+.env
+.env.*
+!.env.example
+
+# Dependencies & build outputs
+node_modules
+.next
+dist
+coverage
+*.tsbuildinfo
+*.log
+
+# Sensitive real data & uploads (STRICT: data/RRTY2026.MBF.xlsx must NEVER be baked into image)
+data/
+*.xlsx
+*.xls
+*.csv
+
+# Documentation & notes
+docs/
+
+# Tests & test artifacts
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+**/tests/

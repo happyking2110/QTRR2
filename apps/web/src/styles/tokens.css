@@ -1,0 +1,49 @@
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --brand-navy: #041F4A;
+  --brand-blue: #0A4874;
+  --brand-blue-bright: #237BD3;
+  --brand-red: #EB2A28;
+  --bg-page: #F6F6F3;
+  --bg-tint: #F1F4F8;
+  --surface: #FCFCFB;
+  --border: #E8E8E4;
+  --text: #0B0B0B;
+  --text-muted: #5B6470;
+
+  --heat-1: #E3F2DF;
+  --heat-1-fg: #006300;
+  --heat-2: #FFF2CC;
+  --heat-2-fg: #7A5200;
+  --heat-3: #FDDDD3;
+  --heat-3-fg: #9A3B12;
+  --heat-4: #F7C9C5;
+  --heat-4-fg: #9B1C1C;
+
+  --ok-bg: #E8F5E9;
+  --ok-fg: #1B5E20;
+  --ok-line: #2E7D32;
+
+  --warn-bg: #FFF8E1;
+  --warn-fg: #7A4F00;
+  --warn-line: #F9A825;
+
+  --bad-bg: #FDECEA;
+  --bad-fg: #9B1C1C;
+  --bad-line: #C62828;
+
+  --info-bg: #E7F1FB;
+  --info-fg: #0A4874;
+  --info-line: #237BD3;
+
+  --none-bg: #F1F3F5;
+  --none-fg: #5B6470;
+  --none-line: #9AA3AE;
+
+  --wait-bg: #EEEBFB;
+  --wait-fg: #3F32A0;
+  --wait-line: #5B4BC4;
+
+  --radius-card: 12px;
+  --radius-control: 8px;
+}

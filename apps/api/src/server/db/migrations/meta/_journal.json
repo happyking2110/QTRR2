@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1791741578203,
+      "tag": "0000_sour_silver_sable",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791741578204,
+      "tag": "0001_grant_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791744385919,
+      "tag": "0002_petite_domino",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791855710018,
+      "tag": "0003_nosy_zarek",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791903301981,
+      "tag": "0004_flippant_violations",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791980000000,
+      "tag": "0005_indicator_targets",
+      "breakpoints": true
+    }
+  ]
+}

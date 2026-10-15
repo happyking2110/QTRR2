@@ -1,0 +1,71 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+.yarn/install-state.gz
+
+# Testing & Coverage
+coverage/
+.nyc_output/
+
+# Build & Output
+.next/
+out/
+build/
+dist/
+apps/*/dist/
+apps/*/.next/
+apps/*/out/
+
+# TypeScript & Next.js cache
+*.tsbuildinfo
+next-env.d.ts
+.turbo/
+
+# Environment & Secrets (TUYỆT ĐỐI KHÔNG COMMIT FILE .ENV)
+.env
+.env*.local
+.env.production
+.env.staging
+
+# Operating System & File System artifacts
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDEs & Text Editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+
+# Logs & Debugging
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Docker local data & backups
+pgdata/
+backups/
+*.sql.gz
+
+# Development test screenshots (chỉ giữ ảnh tài liệu chính thức trong docs/huong-dan/hinh-anh/)
+docs/nhat-ky/**/*.png
+docs/nhat-ky/**/*.json
+
+# Temporary & Scratch files
+*.tmp
+*.bak
+scratch/
+.claude/
+.vercel

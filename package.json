@@ -1,0 +1,18 @@
+{
+  "name": "hsrr",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "test": "npm run test -w @hsrr/api",
+    "build": "npm run build -w @hsrr/api && npm run build -w @hsrr/web",
+    "db:generate": "npm run db:generate -w @hsrr/api",
+    "db:migrate": "npm run db:migrate -w @hsrr/api",
+    "db:seed": "npm run db:seed -w @hsrr/api",
+    "db:seed-demo": "npm run db:seed-demo -w @hsrr/api",
+    "db:demo-clear": "npm run db:demo-clear -w @hsrr/api",
+    "admin:create": "npm run admin:create -w @hsrr/api --"
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "name": "@hsrr/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.json",
+    "start": "node --env-file=../../.env dist/main.js",
+    "db:generate": "node --env-file=../../.env ../../node_modules/.bin/drizzle-kit generate",
+    "db:migrate": "node --env-file=../../.env ../../node_modules/.bin/drizzle-kit migrate",
+    "db:seed": "node --env-file=../../.env ../../node_modules/.bin/tsx scripts/seed.ts",
+    "db:seed-demo": "node --env-file=../../.env ../../node_modules/.bin/tsx scripts/seed-demo.ts",
+    "db:demo-clear": "node --env-file=../../.env ../../node_modules/.bin/tsx scripts/demo-clear.ts",
+    "admin:create": "node --env-file=../../.env ../../node_modules/.bin/tsx scripts/create-admin.ts"
+  },
+  "dependencies": {
+    "@nestjs/common": "^12.1.2",
+    "@nestjs/core": "^12.1.2",
+    "@nestjs/platform-express": "^12.1.2",
+    "@node-rs/argon2": "^2.2.2",
+    "csv-parse": "^7.0.3",
+    "drizzle-orm": "^0.45.4",
+    "exceljs": "^4.4.0",
+    "postgres": "^3.4.9",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "^12.1.2",
+    "@types/multer": "^2.3.0",
+    "@types/node": "^20",
+    "@types/supertest": "^7.2.1",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "drizzle-kit": "^0.31.11",
+    "supertest": "^7.3.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5",
+    "vitest": "^2.1.9",
+    "yaml": "^2.9.1"
+  }
+}

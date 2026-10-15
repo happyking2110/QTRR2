@@ -1,0 +1,81 @@
+@import "../styles/tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  color: var(--text);
+  background-color: var(--bg-page);
+  font-family: var(--font-sans);
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer utilities {
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm 15mm;
+  }
+  header,
+  nav,
+  aside,
+  button,
+  .no-print,
+  [role="navigation"],
+  [role="dialog"],
+  [data-radix-portal] {
+    display: none !important;
+  }
+  body {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+  }
+  table {
+    width: 100% !important;
+    max-width: 100% !important;
+    page-break-inside: auto;
+    border-collapse: collapse !important;
+  }
+  thead {
+    display: table-header-group;
+  }
+  tr,
+  .card,
+  [role="article"],
+  .rounded-card {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  a {
+    text-decoration: none !important;
+    color: inherit !important;
+  }
+  .bg-bg-tint,
+  .bg-surface,
+  .bg-bg-card {
+    background-color: #ffffff !important;
+  }
+  .border,
+  .border-b,
+  .border-t,
+  .border-border {
+    border-color: #cbd5e1 !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

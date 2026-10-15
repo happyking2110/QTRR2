@@ -1,0 +1,1 @@
+ALTER TABLE "indicator_reading" ADD COLUMN "zone_note" text;

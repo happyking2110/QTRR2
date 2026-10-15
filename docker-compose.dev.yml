@@ -1,0 +1,16 @@
+# Cấu hình docker compose mở rộng cho môi trường phát triển (dev)
+# Cách dùng: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+services:
+  db:
+    ports:
+      # Mở cổng PostgreSQL trên 127.0.0.1 để phục vụ kiểm thử và công cụ phát triển
+      - "127.0.0.1:5432:5432"
+    volumes:
+      # Mount thêm script tạo cơ sở dữ liệu hsrr_test (chỉ chạy ở dev)
+      - ./docker/initdb-dev/02-test-db.sql:/docker-entrypoint-initdb.d/02-test-db.sql:ro
+
+  api:
+    ports:
+      # Mở cổng API trên 127.0.0.1 để phục vụ kiểm thử hoặc gọi API trực tiếp
+      - "127.0.0.1:3001:3001"

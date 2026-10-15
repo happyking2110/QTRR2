@@ -1,0 +1,114 @@
+services:
+  db:
+    image: postgres:16
+    container_name: hsrr_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?thiếu POSTGRES_PASSWORD trong .env}
+      HSRR_OWNER_PASSWORD: ${HSRR_OWNER_PASSWORD:?thiếu HSRR_OWNER_PASSWORD trong .env}
+      HSRR_APP_PASSWORD: ${HSRR_APP_PASSWORD:?thiếu HSRR_APP_PASSWORD trong .env}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/initdb/01-roles.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: hsrr_api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_DOCKER_URL:-postgres://hsrr_app:${HSRR_APP_PASSWORD}@db:5432/hsrr}
+      DATABASE_MIGRATE_URL: ${DATABASE_MIGRATE_DOCKER_URL:-postgres://hsrr_owner:${HSRR_OWNER_PASSWORD}@db:5432/hsrr}
+      SESSION_SECRET: ${SESSION_SECRET:?thiếu SESSION_SECRET trong .env}
+      APP_ORIGIN: ${APP_ORIGIN:?thiếu APP_ORIGIN trong .env}
+      TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:?thiếu TRUSTED_PROXY_IPS trong .env}
+      API_PORT: 3001
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    expose:
+      - "3001"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        API_BASE_URL: ${DOCKER_API_BASE_URL:-http://api:3001}
+    container_name: hsrr_web
+    restart: unless-stopped
+    environment:
+      API_BASE_URL: ${DOCKER_API_BASE_URL:-http://api:3001}
+      PORT: 3000
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    ports:
+      - "${WEB_PORT:-127.0.0.1:3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/login"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  backup:
+    image: postgres:16
+    container_name: hsrr_backup
+    restart: unless-stopped
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: hsrr_owner
+      PGPASSWORD: ${HSRR_OWNER_PASSWORD:?thiếu HSRR_OWNER_PASSWORD trong .env}
+      PGDATABASE: hsrr
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    volumes:
+      - ./ops/backup.sh:/usr/local/bin/backup.sh:ro
+      - ./ops/prune-sessions.sh:/usr/local/bin/prune-sessions.sh:ro
+      - ./ops/backup-scheduler.sh:/usr/local/bin/backup-scheduler.sh:ro
+      - backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["/usr/local/bin/backup-scheduler.sh"]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pgdata:
+  backups:
